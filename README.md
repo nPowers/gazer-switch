@@ -39,7 +39,7 @@ Plug the webcam and the serial adapter into that PC, not into the switch. If the
 
 ## Install
 
-You need 64-bit Python 3.12–3.13 for Windows from https://www.python.org/downloads/windows/ . During install, tick "Add python.exe to PATH" (or use the py launcher). If Python is missing, `install.bat` points you to that page and, if winget is available, can install Python 3.13 for you. Then close the window and run `install.bat` again.
+You need 64-bit Python 3.12–3.13 for Windows from https://www.python.org/downloads/windows/ . During install, tick "Add python.exe to PATH" (or use the py launcher). The installer will not use Python 3.11, other versions, or 32-bit Python. If a suitable Python is missing, `install.bat` points you to that page and, if winget is available, can install Python 3.13 for you. Then close the window and run `install.bat` again.
 
 1. Download or clone this folder.
 2. Double-click `install.bat`.

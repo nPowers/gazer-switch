@@ -4,25 +4,77 @@ $ErrorActionPreference = "Stop"
 $root = $PSScriptRoot
 Set-Location $root
 
+function Get-PythonInfo($Exe, $Prefix) {
+    $cmd = Get-Command $Exe -ErrorAction SilentlyContinue
+    if (-not $cmd) { return $null }
+    $prefix = @($Prefix)
+    $code = "import sys,struct; print(sys.version.split()[0]); print(struct.calcsize('P')*8); print(sys.executable)"
+    try {
+        $raw = & $Exe @prefix -c $code 2>$null
+    } catch {
+        return $null
+    }
+    if ($LASTEXITCODE -ne 0) { return $null }
+    $lines = @()
+    foreach ($line in @($raw)) {
+        $t = ("$line").Trim()
+        if ($t.Length -gt 0) { $lines += $t }
+    }
+    if ($lines.Count -lt 3) { return $null }
+    $version = $lines[0]
+    $bits = 0
+    if (-not [int]::TryParse($lines[1], [ref]$bits)) { return $null }
+    $parts = $version.Split(".")
+    if ($parts.Count -lt 2) { return $null }
+    $major = 0
+    $minor = 0
+    if (-not [int]::TryParse($parts[0], [ref]$major)) { return $null }
+    if (-not [int]::TryParse($parts[1], [ref]$minor)) { return $null }
+    $ok = ($major -eq 3 -and $minor -ge 12 -and $minor -le 13 -and $bits -eq 64)
+    return @{
+        Exe = $Exe
+        Prefix = $prefix
+        Version = $version
+        Bits = $bits
+        Major = $major
+        Minor = $minor
+        Executable = $lines[2]
+        Ok = $ok
+    }
+}
+
 function Find-GazerPython {
-    $candidates = @(
+    $preferred = @(
         @{ Exe = "py"; Prefix = @("-3.13") },
         @{ Exe = "py"; Prefix = @("-3.12") },
-        @{ Exe = "py"; Prefix = @("-3.11") },
         @{ Exe = "python"; Prefix = @() }
     )
-    foreach ($item in $candidates) {
-        $cmd = Get-Command $item.Exe -ErrorAction SilentlyContinue
-        if (-not $cmd) { continue }
-        $prefix = @($item.Prefix)
-        $check = "import sys; raise SystemExit(0 if (3, 11) <= sys.version_info[:2] <= (3, 13) else 1)"
-        & $item.Exe @prefix -c $check 1>$null 2>$null
-        if ($LASTEXITCODE -ne 0) { continue }
-        $version = & $item.Exe @prefix -c "import sys; print(sys.version.split()[0])"
-        if ($LASTEXITCODE -ne 0) { continue }
-        return @{ Exe = $item.Exe; Prefix = $prefix; Version = ("$version").Trim() }
+    foreach ($item in $preferred) {
+        $info = Get-PythonInfo $item.Exe $item.Prefix
+        if ($null -ne $info -and $info.Ok) { return $info }
     }
     return $null
+}
+
+function Get-UnsuitablePythonNotes {
+    $probes = @(
+        @{ Exe = "py"; Prefix = @("-3.13") },
+        @{ Exe = "py"; Prefix = @("-3.12") },
+        @{ Exe = "python"; Prefix = @() },
+        @{ Exe = "py"; Prefix = @() }
+    )
+    $notes = @()
+    $seen = @{}
+    foreach ($item in $probes) {
+        $info = Get-PythonInfo $item.Exe $item.Prefix
+        if ($null -eq $info) { continue }
+        if ($info.Ok) { continue }
+        $key = ("{0}|{1}" -f $info.Executable, $info.Version)
+        if ($seen.ContainsKey($key)) { continue }
+        $seen[$key] = $true
+        $notes += $info
+    }
+    return ,$notes
 }
 
 function Read-JsonFile($Path) {
@@ -82,11 +134,19 @@ function Read-SwitchPort($Prompt, $Default, $Other) {
 }
 
 Write-Host "Gazer setup"
-Write-Host "Looking for Python 3.11, 3.12, or 3.13 ..."
+Write-Host "Looking for 64-bit Python 3.12 or 3.13 ..."
 $python = Find-GazerPython
 if ($null -eq $python) {
     Write-Host ""
-    Write-Host "Python 3.11, 3.12, or 3.13 was not found."
+    Write-Host "Gazer needs 64-bit Python 3.12 or 3.13"
+    $found = @(Get-UnsuitablePythonNotes)
+    if ($found.Count -gt 0) {
+        foreach ($item in $found) {
+            Write-Host "Found Python $($item.Version) ($($item.Bits)-bit), which cannot be used."
+        }
+    } else {
+        Write-Host "64-bit Python 3.12 or 3.13 was not found."
+    }
     Write-Host "Download it from https://www.python.org/downloads/windows/"
     Write-Host "In the installer, turn on 'Add python.exe to PATH'."
     Write-Host "Or, if you use winget: winget install Python.Python.3.13"
@@ -101,7 +161,7 @@ if ($null -eq $python) {
             exit 1
         }
     }
-    Write-Host "Stopped. Install Python 3.11, 3.12, or 3.13, then run install.bat again."
+    Write-Host "Stopped. Install 64-bit Python 3.12 or 3.13, then run install.bat again."
     exit 1
 }
 Write-Host "Using Python $($python.Version) ($($python.Exe) $($python.Prefix -join ' '))"
