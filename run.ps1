@@ -1,0 +1,4 @@
+$ErrorActionPreference = 'Stop'
+Set-Location $PSScriptRoot
+& "$PSScriptRoot\.venv\Scripts\python.exe" "$PSScriptRoot\gaze_switch.py" @args
+exit $LASTEXITCODE

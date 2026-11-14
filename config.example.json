@@ -1,0 +1,16 @@
+{
+  "com_port": "COM3",
+  "baud": 115200,
+  "camera_index": 0,
+  "camera_name": "",
+  "try_other_cameras": false,
+  "left_threshold_deg": -15.0,
+  "right_threshold_deg": 15.0,
+  "dwell_ms": 400,
+  "cooldown_ms": 2000,
+  "initial_host": 1,
+  "max_frame_gap_ms": 300,
+  "calibration": null,
+  "left_host": 1,
+  "right_host": 2
+}

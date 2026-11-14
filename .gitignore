@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+logs/
+*.log
+.watcher.lock
+*.tmp
+.env
+.env.*
+!.env.example
+.tray.log
+config.json
