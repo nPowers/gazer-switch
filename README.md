@@ -39,7 +39,7 @@ Plug the webcam and the serial adapter into that PC, not into the switch. If the
 
 ## Install
 
-Python 3.11, 3.12, or 3.13 on Windows.
+You need 64-bit Python 3.12–3.13 for Windows from https://www.python.org/downloads/windows/ . During install, tick "Add python.exe to PATH" (or use the py launcher). If Python is missing, `install.bat` points you to that page and, if winget is available, can install Python 3.13 for you. Then close the window and run `install.bat` again.
 
 1. Download or clone this folder.
 2. Double-click `install.bat`.
@@ -53,8 +53,6 @@ The installer finds Python, creates a `.venv`, installs the requirements, and co
 Press Enter to keep the value in brackets. Running the installer again keeps your saved calibration and only changes answers you change.
 
 It finishes by running `gaze_switch.py --check`.
-
-If Python is missing, the installer prints https://www.python.org/downloads/windows/ and can optionally run `winget install Python.Python.3.13`.
 
 The face landmark model is already in `models/`. Gazer does not download it.
 
