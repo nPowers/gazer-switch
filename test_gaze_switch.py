@@ -125,28 +125,356 @@ class TrayTests(unittest.TestCase):
     def test_tooltip_and_visual_states(self):
         cal = {"left_yaw": 20.0, "right_yaw": -28.0}
         self.assertEqual(g.tray_visual_state(False, None, ""), "needs_calibration")
-        self.assertEqual(g.tray_tooltip(False, None, None, ""), "Gazer: needs calibration")
-        self.assertEqual(g.tray_visual_state(False, cal, ""), "disarmed")
-        self.assertEqual(
-            g.tray_tooltip(False, 2, cal, ""),
-            "Gazer: disarmed, host 2 (press Space or use the menu)",
-        )
+        self.assertEqual(g.tray_tooltip(False, None, None, ""), "Gazer: paused (needs calibration)")
+        self.assertEqual(g.tray_visual_state(False, cal, ""), "paused")
+        self.assertEqual(g.tray_tooltip(False, 2, cal, ""), "Gazer: paused (disarmed), host 2")
+        self.assertEqual(g.tray_tooltip(False, None, cal, ""), "Gazer: paused (disarmed)")
         self.assertEqual(g.tray_visual_state(True, cal, ""), "armed")
-        self.assertEqual(g.tray_tooltip(True, 1, cal, ""), "Gazer: armed, host 1")
-        self.assertEqual(g.tray_tooltip(True, 3, cal, ""), "Gazer: armed, host 3")
+        self.assertEqual(g.tray_tooltip(True, 1, cal, ""), "Gazer: running (armed), host 1")
+        self.assertEqual(g.tray_tooltip(True, 3, cal, ""), "Gazer: running (armed), host 3")
+        self.assertEqual(g.tray_tooltip(True, None, cal, ""), "Gazer: running (armed)")
         self.assertEqual(g.tray_visual_state(False, cal, "bad echo"), "error")
         self.assertTrue(g.tray_tooltip(False, None, cal, "bad echo").startswith("Gazer: error"))
         self.assertEqual(g.tray_icon_rgb("armed"), (40, 180, 70))
+        self.assertEqual(g.tray_icon_rgb("paused"), (140, 140, 140))
         self.assertEqual(g.tray_icon_rgb("disarmed"), (140, 140, 140))
         self.assertEqual(g.tray_icon_rgb("error"), (220, 140, 30))
+
+    def test_menu_has_pause_resume_relaunch_and_window(self):
+        cal = {"left_yaw": 20.0, "right_yaw": -28.0}
+        paused = g.tray_menu_spec(False, cal, 2, "", True)
+        self.assertEqual(
+            [item["label"] for item in paused],
+            ["Show window", "Hide window", "Resume", "Calibrate", "Relaunch", "Quit"],
+        )
+        self.assertTrue(paused[0]["default"])
+        self.assertTrue([item for item in paused if item["action"] == "resume"][0]["enabled"])
+        running = g.tray_menu_spec(True, cal, 3, "", True)
+        self.assertEqual([item["label"] for item in running if item["action"] == "pause"], ["Pause"])
+        blocked = g.tray_menu_spec(False, None, 2, "", False)
+        resume = [item for item in blocked if item["action"] == "resume"][0]
+        self.assertFalse(resume["enabled"])
+        self.assertIn("calibrate", resume["label"].lower())
+        no_host = g.tray_menu_spec(False, cal, None, "", True)
+        self.assertFalse([item for item in no_host if item["action"] == "resume"][0]["enabled"])
+        self.assertIn("host", [item for item in no_host if item["action"] == "resume"][0]["label"].lower())
+        hidden = g.tray_menu_spec(False, cal, 2, "", False)
+        self.assertFalse([item for item in hidden if item["action"] == "hide"][0]["enabled"])
+        errored = g.tray_menu_spec(False, cal, 2, "bad echo", True)
+        self.assertFalse([item for item in errored if item["action"] == "resume"][0]["enabled"])
 
     def test_tray_requests_are_queued_not_executed(self):
         tray = g.TrayIcon()
         tray.requests.put("show")
-        tray.requests.put("toggle_arm")
+        tray.requests.put("pause")
+        tray.requests.put("resume")
+        tray.requests.put("relaunch")
         tray.requests.put("quit")
-        self.assertEqual(tray.poll(), ["show", "toggle_arm", "quit"])
+        self.assertEqual(tray.poll(), ["show", "pause", "resume", "relaunch", "quit"])
         self.assertEqual(tray.poll(), [])
+
+
+class ControlPlanTests(unittest.TestCase):
+    def cfg(self):
+        c = g.default_config()
+        c["calibration"] = {"left_yaw": 20.0, "right_yaw": -28.0}
+        return c
+
+    def test_pause_disarms_and_sends_no_switch_command(self):
+        s = g.SwitchController(self.cfg())
+        self.assertTrue(s.set_armed(True))
+        link = g.SerialLink(self.cfg(), serial_factory=FakeSerial, sleeper=lambda _s: None)
+        self.assertEqual(link.send(1), bytes.fromhex("AA 00 56"))
+        writes = list(FakeSerial.instances[-1].writes)
+        plan = g.plan_control("pause", {"armed": True, "can_arm": True, "calibrating": False, "window_visible": True})
+        self.assertFalse(plan["armed"])
+        self.assertTrue(plan["close_serial"])
+        self.assertFalse(plan["open_serial"])
+        self.assertFalse(plan["quit"])
+        self.assertNotIn("send", plan)
+        g.apply_arm_plan(s, link, plan)
+        self.assertFalse(s.armed)
+        self.assertTrue(FakeSerial.instances[-1].closed)
+        self.assertEqual(FakeSerial.instances[-1].writes, writes)
+        self.assertIsNone(s.update(-24, 10))
+
+    def test_resume_opens_the_port_without_writing_a_command(self):
+        FakeSerial.instances.clear()
+        s = g.SwitchController(self.cfg())
+        link = g.SerialLink(self.cfg(), serial_factory=FakeSerial, sleeper=lambda _s: None)
+        plan = g.plan_control("resume", {"armed": False, "can_arm": True, "calibrating": False, "window_visible": False})
+        self.assertTrue(plan["armed"])
+        self.assertTrue(plan["open_serial"])
+        self.assertIsNone(g.apply_arm_plan(s, link, plan))
+        self.assertTrue(s.armed)
+        self.assertEqual(FakeSerial.instances[-1].writes, [])
+        self.assertTrue(FakeSerial.instances[-1].is_open)
+        link.close()
+
+    def test_resume_refuses_without_calibration_or_during_sampling(self):
+        blocked = g.plan_control("resume", {"armed": False, "can_arm": False, "calibrating": False, "window_visible": True})
+        sampling = g.plan_control("resume", {"armed": False, "can_arm": True, "calibrating": True, "window_visible": True})
+        for plan in (blocked, sampling):
+            self.assertFalse(plan["armed"])
+            self.assertFalse(plan["open_serial"])
+            self.assertFalse(plan["close_serial"])
+
+    def test_resume_serial_failure_disarms_without_a_retry_write(self):
+        class Boom(FakeSerial):
+            def open(self):
+                raise RuntimeError("port busy")
+        s = g.SwitchController(self.cfg())
+        link = g.SerialLink(self.cfg(), serial_factory=Boom, sleeper=lambda _s: None)
+        plan = g.plan_control("resume", {"armed": False, "can_arm": True, "calibrating": False, "window_visible": True})
+        message = g.apply_arm_plan(s, link, plan)
+        self.assertIn("port busy", message)
+        self.assertFalse(s.armed)
+        self.assertIsNone(s.current_host)
+        self.assertEqual(Boom.instances[-1].writes, [])
+
+    def test_closing_the_preview_hides_and_keeps_running(self):
+        self.assertEqual(g.note_preview_visibility(0), "closed")
+        self.assertEqual(g.note_preview_visibility(-1), "closed")
+        self.assertEqual(g.note_preview_visibility(1), "open")
+        self.assertEqual(g.note_preview_visibility("nope"), "closed")
+        state = {"armed": True, "can_arm": True, "calibrating": False, "window_visible": True}
+        plan = g.plan_control("preview_closed", state)
+        self.assertEqual(plan["window"], "hide")
+        self.assertFalse(plan["quit"])
+        self.assertTrue(plan["armed"])
+        self.assertFalse(plan["close_serial"])
+        self.assertEqual(g.plan_control("hide", state)["window"], "hide")
+        self.assertEqual(g.plan_control("show", state)["window"], "show")
+        self.assertEqual(g.preview_dismiss_action(True), "preview_closed")
+        self.assertEqual(g.preview_dismiss_action(False), "quit")
+
+    def test_quit_releases_serial_and_relaunch_starts_a_replacement(self):
+        state = {"armed": True, "can_arm": True, "calibrating": False, "window_visible": True}
+        quit_plan = g.plan_control("quit", state)
+        self.assertTrue(quit_plan["quit"])
+        self.assertFalse(quit_plan["relaunch"])
+        self.assertTrue(quit_plan["close_serial"])
+        self.assertFalse(quit_plan["armed"])
+        relaunch = g.plan_control("relaunch", state)
+        self.assertTrue(relaunch["quit"])
+        self.assertTrue(relaunch["relaunch"])
+        self.assertTrue(relaunch["close_serial"])
+        self.assertFalse(relaunch["armed"])
+        command = g.build_relaunch_command(
+            __import__("pathlib").Path("config.json"),
+            __import__("pathlib").Path("model.task"),
+            executable="pythonw.exe",
+        )
+        self.assertEqual(command[0], "pythonw.exe")
+        self.assertTrue(command[1].endswith("gaze_switch.py"))
+        self.assertIn("--replace", command)
+        self.assertNotIn("--minimized", command)
+        self.assertIn("config.json", command)
+        seen = {}
+        def popen(cmd, **kwargs):
+            seen["cmd"] = cmd
+            seen["kwargs"] = kwargs
+            return "proc"
+        self.assertEqual(g.spawn_detached(["pythonw.exe", "gaze_switch.py", "--replace"], popen=popen), "proc")
+        self.assertEqual(seen["kwargs"]["stdin"], __import__("subprocess").DEVNULL)
+        if __import__("sys").platform == "win32":
+            self.assertIn("creationflags", seen["kwargs"])
+        else:
+            self.assertTrue(seen["kwargs"]["start_new_session"])
+
+    def test_camera_reopen_retries_then_raises_without_touching_serial(self):
+        calls = []
+        sleeps = []
+        class Cap:
+            def __init__(self, source):
+                calls.append(source)
+            def isOpened(self):
+                return len(calls) >= 3
+            def release(self):
+                pass
+        c = g.default_config()
+        _camera, frame, which = g.open_camera_retrying(
+            c, attempts=4, sleeper=sleeps.append,
+            capture_factory=Cap, read_frame=lambda cam: "frame" if cam.isOpened() else None,
+        )
+        self.assertEqual(frame, "frame")
+        self.assertEqual(which, c["camera_index"])
+        self.assertEqual(len(sleeps), 2)
+        class Closed:
+            def isOpened(self):
+                return False
+            def release(self):
+                pass
+        before = len(sleeps)
+        with self.assertRaises(RuntimeError):
+            g.open_camera_retrying(
+                c, attempts=1, sleeper=sleeps.append,
+                capture_factory=lambda _source: Closed(), read_frame=lambda cam: None,
+            )
+        self.assertEqual(len(sleeps), before)
+
+
+class InstanceTests(unittest.TestCase):
+    def test_second_launch_focuses_and_does_not_take_the_lock(self):
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as folder:
+            folder = Path(folder)
+            first = g.claim_watcher(folder)
+            self.assertIsNotNone(first)
+            restored = []
+            second = g.claim_watcher(folder, restore=lambda: restored.append("shown"))
+            self.assertIsNone(second)
+            self.assertEqual(restored, ["shown"])
+            self.assertEqual(g.drain_instance_commands(folder), ["show"])
+            self.assertEqual(g.drain_instance_commands(folder), [])
+            still = g.claim_watcher(folder, restore=lambda: None)
+            self.assertIsNone(still)
+            first.release()
+            third = g.claim_watcher(folder, restore=lambda: self.fail("focused a free lock"))
+            self.assertIsNotNone(third)
+            third.release()
+
+    def test_new_owner_discards_a_stale_quit(self):
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as folder:
+            folder = Path(folder)
+            g.post_instance_command(folder, "quit")
+            lock = g.claim_watcher(folder)
+            self.assertIsNotNone(lock)
+            self.assertEqual(g.drain_instance_commands(folder), [])
+            lock.release()
+            with self.assertRaises(ValueError):
+                g.post_instance_command(folder, "relaunch")
+
+    def test_replace_waits_for_the_holder_to_quit(self):
+        import tempfile, threading, time
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as folder:
+            folder = Path(folder)
+            holder = g.claim_watcher(folder)
+            def release_on_quit():
+                deadline = time.monotonic() + 2
+                while time.monotonic() < deadline:
+                    if "quit" in g.drain_instance_commands(folder):
+                        holder.release()
+                        return
+                    time.sleep(0.01)
+            thread = threading.Thread(target=release_on_quit, daemon=True)
+            thread.start()
+            killed = []
+            got = g.claim_watcher(
+                folder, replace=True, process_table=lambda: [(99, "python gaze_switch.py")],
+                terminate=killed.append, timeout=2,
+            )
+            self.assertIsNotNone(got)
+            self.assertEqual(killed, [])
+            got.release()
+            thread.join(2)
+            self.assertFalse(thread.is_alive())
+
+    def test_replace_terminates_a_gazer_that_ignores_quit(self):
+        import os, tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as folder:
+            folder = Path(folder)
+            first = g.claim_watcher(folder)
+            killed = []
+            def table():
+                return [
+                    (os.getpid(), "python gaze_switch.py --replace"),
+                    (4321, r"C:\Gazer\.venv\Scripts\pythonw.exe C:\Gazer\gaze_switch.py --minimized"),
+                    (50, "python -m unittest"),
+                    (51, "notepad.exe readme"),
+                ]
+            def killer(pid):
+                killed.append(pid)
+                first.release()
+            got = g.claim_watcher(
+                folder, replace=True, process_table=table, terminate=killer,
+                sleeper=lambda _dt: None, clock=lambda: 0.0, timeout=0,
+            )
+            self.assertEqual(killed, [4321])
+            self.assertIsNotNone(got)
+            self.assertEqual(g.drain_instance_commands(folder), [])
+            got.release()
+
+    def test_replace_when_nothing_is_running_does_not_kill(self):
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as folder:
+            killed = []
+            lock = g.claim_watcher(
+                Path(folder), replace=True,
+                process_table=lambda: [(7, "pythonw.exe gaze_switch.py")],
+                terminate=killed.append,
+            )
+            self.assertIsNotNone(lock)
+            self.assertEqual(killed, [])
+            lock.release()
+
+    def test_replace_reports_when_the_camera_stays_busy(self):
+        import os, tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as folder:
+            folder = Path(folder)
+            first = g.claim_watcher(folder)
+            killed = []
+            try:
+                with self.assertRaises(RuntimeError):
+                    g.claim_watcher(
+                        folder, replace=True, process_table=lambda: [],
+                        terminate=killed.append, sleeper=lambda _dt: None,
+                        clock=lambda: 0.0, timeout=0,
+                    )
+            finally:
+                first.release()
+            self.assertEqual(killed, [])
+            self.assertIsNone(g.owner_pid_from_lock(first.path, me=os.getpid()))
+
+    def test_replace_stops_the_pid_recorded_in_the_lock(self):
+        import os, tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as folder:
+            folder = Path(folder)
+            first = g.claim_watcher(folder)
+            recorded = first.path.read_bytes()
+            self.assertTrue(recorded.startswith(b"0"))
+            self.assertIn(f"{os.getpid():010d}".encode("ascii"), recorded)
+            with open(first.path, "r+b") as handle:
+                handle.seek(1)
+                handle.write(b"0000004321\n")
+                handle.flush()
+            self.assertEqual(g.owner_pid_from_lock(first.path), 4321)
+            killed = []
+            def killer(pid):
+                killed.append(pid)
+                first.release()
+            got = g.claim_watcher(
+                folder, replace=True, process_table=lambda: [], terminate=killer,
+                sleeper=lambda _dt: None, clock=lambda: 0.0, timeout=0,
+            )
+            self.assertEqual(killed, [4321])
+            self.assertIsNotNone(got)
+            got.release()
+            self.assertIsNone(g.owner_pid_from_lock(Path(folder) / "missing.lock"))
+            garbage = folder / "garbage.lock"
+            garbage.write_bytes(b"0nope\n")
+            self.assertIsNone(g.owner_pid_from_lock(garbage))
+            self.assertIsNone(g.owner_pid_from_lock(first.path))
+
+    def test_gazer_command_lines_skip_this_process_and_unrelated_ones(self):
+        rows = [
+            (10, r"C:\Python\pythonw.exe C:\Gazer\gaze_switch.py --minimized"),
+            (11, "python -m unittest"),
+            (12, "/usr/bin/python3 /tmp/gaze_switch.py --replace"),
+            (13, "notepad.exe"),
+        ]
+        self.assertEqual(g.gazer_pids_from_table(rows, me=12), [10])
+        self.assertTrue(g.is_gazer_command(rows[0][1]))
+        self.assertFalse(g.is_gazer_command(rows[1][1]))
+        self.assertFalse(g.is_gazer_command("python editor.py"))
 
 
 class PortableConfigTests(unittest.TestCase):
