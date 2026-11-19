@@ -3,6 +3,7 @@ __pycache__/
 logs/
 *.log
 .watcher.lock
+.watcher.commands/
 *.tmp
 .env
 .env.*

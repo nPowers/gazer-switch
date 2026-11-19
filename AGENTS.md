@@ -1,12 +1,16 @@
 # Guidance for AI agents
 
+DOMAIN: infrastructure
+
 Gazer is a Windows utility that watches a webcam for a head turn and sends a short RS-232 command to a USB KVM switch. It is written for 64-bit Python 3.12 or 3.13.
 
 ## Safety
 
 - Do not run the live loop, and do not open a camera or a serial port, during automated verification.
 - Never change the serial settings: 115200 8N1, DTR/RTS off, no flow control. Send one raw write only. No retries and no baud sweep.
-- Startup must remain preview/disarmed. Arm only after calibration, from the Space key or the tray Arm item.
+- Startup must remain preview/disarmed. Arm only after calibration, from the Space key or the tray Resume item.
+- Closing the preview hides Gazer to the tray when the icon is available. Quit (menu, Q, or Esc) is what releases the camera and the COM port.
+- A second launch focuses the running instance. Relaunch is what stops other Gazer processes and starts fresh. Pause must not send a switch command.
 - Never overwrite an existing `config.json`. Copy `config.example.json` only when `config.json` is missing.
 - The installer may create a Startup shortcut only after a yes answer. That shortcut still starts disarmed.
 
