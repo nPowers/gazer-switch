@@ -173,6 +173,86 @@ class TrayTests(unittest.TestCase):
         self.assertEqual(tray.poll(), ["show", "pause", "resume", "relaunch", "quit"])
         self.assertEqual(tray.poll(), [])
 
+    def test_update_rebuilds_the_menu_without_deadlocking(self):
+        """pystray rebuilds the menu on this thread by calling back into the tray lock."""
+        import threading
+
+        class FakeIcon:
+            def __init__(self, tray):
+                self.tray = tray
+                self.icon = None
+                self.title = ""
+                self.lock_held_during_rebuild = None
+                self.pause_label = None
+                self.pause_enabled = None
+                self.hide_enabled = None
+
+            def update_menu(self):
+                # pystray calls the dynamic items (pause_text / pause_enabled / hide_enabled)
+                # while rebuilding. Each one reads the tray state through _menu_spec().
+                tray = self.tray
+
+                def menu_entry(actions):
+                    for entry in tray._menu_spec():
+                        if entry["action"] in actions:
+                            return entry
+                    return None
+
+                def pause_text(item):
+                    entry = menu_entry(("pause", "resume"))
+                    return entry["label"] if entry else "Resume"
+
+                def pause_enabled(item):
+                    entry = menu_entry(("pause", "resume"))
+                    return bool(entry and entry["enabled"])
+
+                def hide_enabled(item):
+                    entry = menu_entry(("hide",))
+                    return bool(entry and entry["enabled"])
+
+                self.lock_held_during_rebuild = _held_by_current_thread(tray._lock)
+                self.pause_label = pause_text(None)
+                self.pause_enabled = pause_enabled(None)
+                self.hide_enabled = hide_enabled(None)
+
+        tray = g.TrayIcon()
+        self.assertIsInstance(tray._lock, type(threading.RLock()))
+        icon = FakeIcon(tray)
+        tray._icon = icon
+        tray.available = True
+        cal = {"left_yaw": 20.0, "right_yaw": -28.0}
+        errors = []
+
+        def run():
+            try:
+                tray.update(False, 2, cal, "", True)
+            except Exception as exc:
+                errors.append(exc)
+
+        thread = threading.Thread(target=run, daemon=True)
+        thread.start()
+        thread.join(2)
+        self.assertFalse(thread.is_alive(), "TrayIcon.update deadlocked in update_menu")
+        self.assertEqual(errors, [])
+        self.assertFalse(icon.lock_held_during_rebuild)
+        self.assertEqual(icon.title, "Gazer: paused (disarmed), host 2")
+        self.assertEqual(icon.pause_label, "Resume")
+        self.assertTrue(icon.pause_enabled)
+        self.assertTrue(icon.hide_enabled)
+        self.assertIsNotNone(icon.icon)
+
+
+def _held_by_current_thread(lock):
+    """True when this thread already owns lock. Safe for Lock and RLock."""
+    is_owned = getattr(lock, "_is_owned", None)
+    if callable(is_owned):
+        return bool(is_owned())
+    acquired = lock.acquire(blocking=False)
+    if acquired:
+        lock.release()
+        return False
+    return True
+
 
 class ControlPlanTests(unittest.TestCase):
     def cfg(self):

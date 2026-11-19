@@ -596,7 +596,8 @@ class TrayIcon:
     def __init__(self):
         self.requests = queue.Queue()
         self._icon = None
-        self._lock = threading.Lock()
+        # Re-entrant: pystray evaluates menu callables on this same thread.
+        self._lock = threading.RLock()
         self._armed = False
         self._host = None
         self._calibration = None
@@ -696,12 +697,20 @@ class TrayIcon:
             self._calibration = calibration
             self._error = error or ""
             self._window_visible = bool(window_visible)
-            try:
-                self._icon.icon = render_tray_image(self._armed, self._host, self._calibration, self._error)
-                self._icon.title = tray_tooltip(self._armed, self._host, self._calibration, self._error)
-                self._icon.update_menu()
-            except Exception:
-                pass
+            snapshot = (self._armed, self._host, self._calibration, self._error)
+        # Icon, tooltip, and menu rebuild run outside the lock. update_menu()
+        # calls back into _menu_spec() on this thread, and that must be able
+        # to read the state just published.
+        icon = self._icon
+        if icon is None:
+            return
+        try:
+            armed_now, host_now, calibration_now, error_now = snapshot
+            icon.icon = render_tray_image(armed_now, host_now, calibration_now, error_now)
+            icon.title = tray_tooltip(armed_now, host_now, calibration_now, error_now)
+            icon.update_menu()
+        except Exception:
+            pass
 
     def poll(self):
         actions = []
