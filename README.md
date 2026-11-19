@@ -64,36 +64,41 @@ Double-click `run.bat`. Click the preview window so the keys work.
 - **Space** arms or disarms. Arming waits until calibration is saved and Gazer knows which host is active.
 - **1** or **2** (also **3** or **4**) sets the assumed host in the preview and does not send a command. Use this after you press the button on the switch. Gazer cannot ask the switch which port is active.
 - **X** cancels an in-progress calibration. The saved calibration stays. Gazer stays disarmed.
-- **Q** or **Esc**, or closing the window, quits and releases the webcam.
+- **Q** or **Esc** quits and releases the webcam and the COM port. Closing the window hides it to the tray icon and leaves Gazer running. **Quit** on that icon is the other way out.
 
 The picture is mirrored. The angle is measured on the real camera image, not the mirror. After calibration, left should read negative and right positive.
 
 ## Tray icon
 
-While Gazer is running, a Gazer icon sits in the notification area (by the clock).
+While Gazer is running, a Gazer icon sits in the notification area (by the clock). Closing the preview, or choosing **Hide window**, removes that window and leaves Gazer running. The process keeps the webcam. If it is armed, a look can still switch the KVM. **Q**, **Esc**, or **Quit** is what actually exits and releases the webcam and the COM port.
+
+That is on purpose. Closing the window used to be the only way to stop Gazer, and then the only way back was to start it again by hand. The icon stays so you can pause, resume, or open the preview without a second copy fighting over the camera. If the tray libraries are missing, closing the window quits instead, so a failed icon cannot leave the camera stuck.
 
 | Color | Meaning |
 | --- | --- |
-| Grey | Preview / disarmed, or still needs calibration |
-| Green | Armed |
+| Grey | Paused / disarmed, or still needs calibration |
+| Green | Running / armed |
 | Amber | Error (camera or serial) |
 
-The tooltip says the same thing, for example `Gazer: armed, host 2` or `Gazer: needs calibration`. The number drawn on the icon is the assumed host.
+The tooltip uses the same words, for example `Gazer: running (armed), host 2` or `Gazer: paused (disarmed), host 2`. The number drawn on the icon is the assumed host.
 
 Right-click the icon:
 
-- **Show window** (also the double-click) restores the preview
-- **Arm** / **Disarm** does what Space does. Arm stays disabled until you have calibrated and set the host
-- **Calibrate** does what C does
-- **Quit** closes the serial port, the camera, and the icon
+- **Show window** (also the double-click) brings the preview back. **Hide window** puts it away without quitting.
+- **Pause** / **Resume** stops and starts gaze switching. Pause closes the COM port and does not send a switch command. Resume is the same as Space: it stays disabled until you have calibrated and set the host with 1-4.
+- **Calibrate** does what C does, and shows the window.
+- **Relaunch** asks this Gazer to exit, ends any other `gaze_switch.py` that is still holding the camera or the COM port, then starts a fresh one with the window visible.
+- **Quit** closes the serial port, the camera, and the icon.
 
-Clicks only ask the main window to do the work. The tray thread does not touch the camera or the serial port. If the tray libraries are missing, Gazer still runs and prints a warning.
+A second launch (`run.bat`, `start_minimized.bat`, or the Startup shortcut) does not open the camera again. It asks the Gazer that is already running to show its window, then exits. Use **Relaunch** when you want a clean start instead. `gaze_switch.py --replace` does that same takeover from a console.
+
+Clicks only ask the main loop to do the work. The tray thread does not touch the camera or the serial port. If the tray libraries are missing, Gazer still runs and prints a warning.
 
 ## Start at sign-in
 
 `install.bat` asks whether to start Gazer when you sign in. Yes creates a Startup shortcut named **Gazer** that launches `start_minimized.bat` (the window starts minimized). No removes that shortcut if it is there.
 
-The app still starts disarmed. Arm it with Space or the tray menu after you calibrate.
+The app still starts disarmed. Arm it with Space or the tray **Resume** item after you calibrate. If Gazer is already running at sign-in, the shortcut shows that window instead of starting a second copy.
 
 If a Startup shortcut named **eKL gaze switch** is already there, the installer leaves it alone and does not create a second one.
 
@@ -120,7 +125,7 @@ If a Startup shortcut named **eKL gaze switch** is already there, the installer 
 | `left_host` | `1` | Switch port used when you look left. 1-4, and not the same as `right_host`. |
 | `right_host` | `2` | Switch port used when you look right. |
 
-One face only. No face, two faces, a bad pose, the dead zone, or a frame gap resets the dwell. A second copy of Gazer is refused (`.watcher.lock`).
+One face only. No face, two faces, a bad pose, the dead zone, or a frame gap resets the dwell. A second launch shows the Gazer that is already running instead of opening the camera and the COM port again (`.watcher.lock`). **Pause** and a disarmed state send nothing.
 
 List devices without starting the preview:
 

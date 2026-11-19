@@ -313,9 +313,10 @@ Write-Host "  3. Press C, look at the left monitor, press C, and hold still for 
 Write-Host "  4. Look at the right monitor, press C, and hold still for one second."
 Write-Host "  5. Press 1 or 2 if you need to tell Gazer which computer is active now."
 Write-Host "  6. Press Space to arm. The tray icon turns green."
-Write-Host "  7. Press Q to quit."
+Write-Host "  7. Closing the preview hides it. Quit is on the tray icon, or press Q."
 Write-Host ""
-Write-Host "The tray icon sits by the clock: grey disarmed, green armed, amber error."
-Write-Host "Right-click it for Show window, Arm or Disarm, Calibrate, and Quit."
+Write-Host "The tray icon sits by the clock: grey paused, green running, amber error."
+Write-Host "Right-click it for Show, Hide, Pause or Resume, Calibrate, Relaunch, and Quit."
 Write-Host "Gazer starts disarmed every time. Nothing switches until you arm it."
+Write-Host "A second launch shows the one that is already running."
 exit 0
