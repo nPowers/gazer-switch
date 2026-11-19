@@ -1,5 +1,7 @@
 # Guidance for AI agents
 
+DOMAIN: infrastructure
+
 Gazer is a Windows utility that watches a webcam for a head turn and sends a short RS-232 command to a USB KVM switch. It is written for 64-bit Python 3.12 or 3.13.
 
 ## Safety
